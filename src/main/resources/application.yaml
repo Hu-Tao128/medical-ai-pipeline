@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: medical
+
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017}
+      database: ${MONGODB_DATABASE:medical_docs}
+
+tika:
+  max-string-length: -1
+
+logging:
+  level:
+    root: INFO
+    com.pipeline.medical: DEBUG
