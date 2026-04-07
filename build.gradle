@@ -19,13 +19,15 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.postgresql:postgresql'
+	implementation 'org.hibernate.orm:hibernate-vector:6.5.2.Final'
+	implementation 'com.pgvector:pgvector:0.1.6'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	// PDF text extraction
     implementation 'org.apache.tika:tika-core:2.9.0'
     implementation 'org.apache.tika:tika-parsers-standard-package:2.9.0'
-    // MongoDB
-    implementation 'org.springframework.boot:spring-boot-starter-data-mongodb'
     implementation 'io.github.cdimascio:dotenv-java:3.0.0'
 }
 
