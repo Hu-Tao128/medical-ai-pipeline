@@ -2,13 +2,31 @@ spring:
   application:
     name: medical
 
-  data:
-    mongodb:
-      uri: ${MONGODB_URI:mongodb://localhost:27017}
-      database: ${MONGODB_DATABASE:medical_docs}
+  datasource:
+    url: ${SUPABASE_DB_URL:jdbc:postgresql://localhost:5432/medical_docs}
+    username: ${SUPABASE_DB_USER:postgres}
+    password: ${SUPABASE_DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
 
 tika:
   max-string-length: -1
+
+embedding:
+  vector:
+    dimensions: ${EMBEDDING_VECTOR_DIMENSIONS:768}
+  ollama:
+    enabled: ${OLLAMA_EMBEDDINGS_ENABLED:true}
+    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    model: ${OLLAMA_MODEL:embeddinggemma}
+    action-model: ${OLLAMA_MODEL_ACTION:qwen2.5-coder:3b}
 
 logging:
   level:

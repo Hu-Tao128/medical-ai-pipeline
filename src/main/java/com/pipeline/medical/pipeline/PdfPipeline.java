@@ -1,15 +1,19 @@
 package com.pipeline.medical.pipeline;
 
-import com.pipeline.medical.model.DocumentChunk;
-import com.pipeline.medical.repository.DocumentChunkRepository;
+import com.pipeline.medical.model.EmbeddingEntity;
+import com.pipeline.medical.repository.EmbeddingRepository;
 import com.pipeline.medical.tika.TikaExtractor;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.metadata.TikaCoreProperties;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
@@ -22,7 +26,13 @@ public class PdfPipeline {
     private TikaExtractor tikaExtractor;
 
     @Autowired
-    private DocumentChunkRepository chunkRepository;
+    private EmbeddingRepository embeddingRepository;
+
+    @Autowired
+    private EmbeddingGeneratorService embeddingGeneratorService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     // ── Configuración ─────────────────────────────────────────────────────
     private static final int CHUNK_SIZE   = 1500; // ~200-250 palabras
@@ -77,13 +87,15 @@ public class PdfPipeline {
 
                 Metadata meta = doc.metadata();
 
-                String topicId   = extractTopicId(file);
+                String topicKey  = extractTopicId(file);
+                UUID topicId     = topicUuidFromKey(topicKey);
+                ensureTopicExists(topicId, topicKey);
                 String bookTitle = tikaExtractor.getMetaString(meta, TikaCoreProperties.TITLE, file.getName());
                 String author    = tikaExtractor.getMetaString(meta, TikaCoreProperties.CREATOR, "Desconocido");
                 String edition   = extractEditionFromFilename(file.getName());
                 String year      = extractYear(meta, file.getName());
 
-                System.out.println("   📁 Topic: " + topicId);
+                System.out.println("   📁 Topic: " + topicKey + " (" + topicId + ")");
                 System.out.println("   📗 Libro: " + bookTitle);
                 System.out.println("   ✍️  Autor: " + author + " | Ed: " + edition + " | Año: " + year);
 
@@ -94,19 +106,26 @@ public class PdfPipeline {
                     String currentContent = chunks.get(i);
                     String overlap        = (i > 0) ? lastChars(chunks.get(i - 1), OVERLAP_SIZE) : "";
 
-                    DocumentChunk docChunk = new DocumentChunk(
-                        topicId,
-                        currentContent,
-                        overlap,
-                        file.getName(),
-                        bookTitle,
-                        author,
-                        edition,
-                        year,
-                        file.getAbsolutePath(),
-                        i
-                    );
-                    chunkRepository.save(docChunk);
+                    float[] embedding = embeddingGeneratorService.generateEmbedding(currentContent);
+
+                    EmbeddingEntity entity = new EmbeddingEntity();
+                    entity.setId(UUID.randomUUID());
+                    entity.setTopicId(topicId);
+                    entity.setContent(currentContent);
+                    entity.setOverlapContent(overlap);
+                    entity.setSource(file.getName());
+                    entity.setBookTitle(bookTitle);
+                    entity.setAuthor(author);
+                    entity.setEdition(edition);
+                    entity.setYear(year);
+                    entity.setFilePath(file.getAbsolutePath());
+                    entity.setContentType(detectContentType(file.getName()));
+                    entity.setContentHash(sha256Hex(currentContent));
+                    entity.setContentId(contentUuid(file, i));
+                    entity.setChunkIndex(i);
+                    entity.setEmbedding(toVectorLiteral(embedding));
+
+                    embeddingRepository.save(entity);
                     chunksCreated.incrementAndGet();
                 }
 
@@ -249,6 +268,71 @@ public class PdfPipeline {
             if (haystack.contains(needle)) return true;
         }
         return false;
+    }
+
+    private UUID topicUuidFromKey(String topicKey) {
+        return UUID.nameUUIDFromBytes(("topic:" + topicKey).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private UUID contentUuid(File file, int chunkIndex) {
+        String key = "content:" + file.getAbsolutePath() + ":" + chunkIndex;
+        return UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void ensureTopicExists(UUID topicId, String topicKey) {
+        jdbcTemplate.update(
+                """
+                INSERT INTO topics (id, name, slug)
+                VALUES (?, ?, ?)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                topicId,
+                topicKey,
+                topicKey
+        );
+    }
+
+    private String toVectorLiteral(float[] vector) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < vector.length; i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(vector[i]);
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    private String detectContentType(String filename) {
+        String lower = filename.toLowerCase();
+        if (lower.endsWith(".pdf")) {
+            return "application/pdf";
+        }
+        if (lower.endsWith(".docx")) {
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        }
+        if (lower.endsWith(".doc")) {
+            return "application/msword";
+        }
+        if (lower.endsWith(".txt")) {
+            return "text/plain";
+        }
+        return "application/octet-stream";
+    }
+
+    private String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 no disponible", e);
+        }
     }
 
     // ── Extracción de metadatos del nombre de archivo ─────────────────────
